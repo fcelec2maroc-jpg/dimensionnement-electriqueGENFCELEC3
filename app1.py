@@ -35,7 +35,8 @@ def to_excel(df):
 def sanitize_text(text, max_len=30):
     if not isinstance(text, str):
         return str(text)
-    clean = text.replace("φ", "phi").replace("€", "Euros").replace("é", "e").replace("è", "e").replace("à", "a")
+    # Remplacement de tous les caractères qui peuvent bloquer le PDF
+    clean = text.replace("φ", "phi").replace("€", "Euros").replace("é", "e").replace("è", "e").replace("à", "a").replace("É", "E")
     return clean[:max_len] + "..." if len(clean) > max_len else clean
 
 # --- CLASSE PDF PROFESSIONNELLE ---
@@ -132,14 +133,29 @@ if check_password():
                 
                 c5, c6, c7 = st.columns(3)
                 nature = c5.selectbox("Métal", ["Cuivre", "Aluminium"])
-                type_charge = c6.selectbox("Application", ["Eclairage (Max 3%)", "Autres (Max 5%)"])
+                
+                # NOUVELLES OPTIONS D'APPLICATION ICI
+                type_charge = c6.selectbox("Application", [
+                    "Éclairage (Max 3%)", 
+                    "Prises de courant (Max 5%)",
+                    "Force Motrice / Moteur (Max 5%)",
+                    "Chauffage / Cuisson (Max 5%)",
+                    "Ligne Principale / Abonné (Max 2%)"
+                ])
                 cos_phi = c7.slider("Cos φ", 0.7, 1.0, 0.85)
 
                 if st.form_submit_button("Calculer et Ajouter au Carnet"):
                     V = 230 if "230V" in tension else 400
                     rho = 0.0225 if "Cuivre" in nature else 0.036
                     b = 2 if "230V" in tension else 1
-                    du_max = 3.0 if "Eclairage" in type_charge else 5.0
+                    
+                    # LOGIQUE AUTOMATIQUE DE CHUTE DE TENSION MAX
+                    if "3%" in type_charge:
+                        du_max = 3.0
+                    elif "2%" in type_charge:
+                        du_max = 2.0
+                    else:
+                        du_max = 5.0
 
                     Ib = p_w / (V * cos_phi) if b == 2 else p_w / (V * math.sqrt(3) * cos_phi)
                     calibres = [10, 16, 20, 25, 32, 40, 50, 63, 80, 100, 125, 160, 200, 250, 400, 630, 800, 1000]
@@ -173,6 +189,7 @@ if check_password():
                 pdf.set_font("Helvetica", "B", 8)
                 pdf.set_fill_color(200, 200, 200)
                 
+                # CORRECTION PDF: Ligne complète sans bug !
                 headers = ["Tableau", "Repere", "U", "L(m)", "P(W)", "Ib(A)", "Disj.", "Section", "dU(%)"]
                 widths = [25, 25, 12, 12, 16, 16, 16, 48, 20]
                 
@@ -182,7 +199,6 @@ if check_password():
                 
                 pdf.set_font("Helvetica", "", 8)
                 for row in st.session_state.projet["cables"]:
-                    # Faille 2 corrigée: Utilisation de .get() robuste pour les anciens fichiers JSON
                     pdf.cell(widths[0], 8, sanitize_text(row.get("Tableau", "TGBT"), 15), 1)
                     pdf.cell(widths[1], 8, sanitize_text(row["Repère"], 15), 1)
                     pdf.cell(widths[2], 8, str(row["Tension"])[0:3], 1, 0, 'C')
@@ -236,8 +252,32 @@ if check_password():
                         c1, c2, c3, c4 = st.columns([2,1,1,1])
                         c_nom = c1.text_input("Désignation Circuit (ex: Prises Salon)")
                         c_p = c2.number_input("Puissance (W)", min_value=0.0, value=1000.0)
-                        c_type = c3.selectbox("Type", ["Eclairage", "Prises", "CVC / Moteur"])
-                        c_ku = c4.number_input("Ku (Utilisation)", value=1.0 if c_type=="Eclairage" else 0.8)
+                        
+                        # NOUVELLES OPTIONS DE TYPE ICI
+                        c_type = c3.selectbox("Type", [
+                            "Éclairage", 
+                            "Prises de courant", 
+                            "Chauffage électrique", 
+                            "Climatisation / PAC", 
+                            "Force Motrice", 
+                            "Cuisson", 
+                            "IRVE (Recharge VE)", 
+                            "Divers"
+                        ])
+
+                        # Ku PAR DÉFAUT SELON LE TYPE CHOISI
+                        if c_type in ["Éclairage", "Chauffage électrique", "IRVE (Recharge VE)"]:
+                            ku_def = 1.0
+                        elif c_type == "Prises de courant":
+                            ku_def = 0.5
+                        elif c_type == "Cuisson":
+                            ku_def = 0.7
+                        elif c_type in ["Climatisation / PAC", "Force Motrice"]:
+                            ku_def = 0.75
+                        else:
+                            ku_def = 0.8
+                            
+                        c_ku = c4.number_input("Ku (Utilisation)", min_value=0.1, max_value=1.0, value=float(ku_def), step=0.05)
                         
                         if st.form_submit_button("Ajouter à ce tableau"):
                             st.session_state.projet["tableaux"][nom_tab].append({
@@ -287,8 +327,8 @@ if check_password():
                             pdf.cell(190, 8, f" TABLEAU : {sanitize_text(tab_name)}", border=1, ln=True, fill=True)
                             
                             pdf.set_font("Helvetica", "B", 9)
-                            pdf.cell(70, 6, "Circuit", 1)
-                            pdf.cell(40, 6, "Type", 1, 0, 'C')
+                            pdf.cell(60, 6, "Circuit", 1)
+                            pdf.cell(50, 6, "Type", 1, 0, 'C')
                             pdf.cell(30, 6, "P.Inst (W)", 1, 0, 'C')
                             pdf.cell(20, 6, "Ku", 1, 0, 'C')
                             pdf.cell(30, 6, "P.Abs (W)", 1, 1, 'C')
@@ -296,8 +336,8 @@ if check_password():
                             pdf.set_font("Helvetica", "", 9)
                             sous_total = 0
                             for c in circs:
-                                pdf.cell(70, 6, sanitize_text(c['Circuit'], 35), 1)
-                                pdf.cell(40, 6, sanitize_text(c['Type']), 1, 0, 'C')
+                                pdf.cell(60, 6, sanitize_text(c['Circuit'], 30), 1)
+                                pdf.cell(50, 6, sanitize_text(c['Type'], 25), 1, 0, 'C')
                                 pdf.cell(30, 6, str(c['P(W)']), 1, 0, 'C')
                                 pdf.cell(20, 6, str(c['Ku']), 1, 0, 'C')
                                 pdf.cell(30, 6, str(c['P.Abs(W)']), 1, 1, 'C')
@@ -344,7 +384,6 @@ if check_password():
             
             st.write("✏️ *Astuce : Modifiez les prix unitaires. Appuyez sur Entrée, puis cliquez sur Exporter.*")
             
-            # Faille 1 corrigée : Ajout d'une clé "editeur_devis" pour éviter la perte des données modifiées par l'utilisateur !
             df_edited = st.data_editor(
                 df_grouped,
                 key="editeur_devis",

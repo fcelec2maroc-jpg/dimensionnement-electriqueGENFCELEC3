@@ -84,10 +84,8 @@ if check_password():
     st.sidebar.image("logoFCELEC.png", use_container_width=True)
     st.sidebar.markdown("### 💾 GESTION DE PROJET")
     
-    # Affichage du projet en cours dans la barre latérale
     st.sidebar.info(f"📁 Projet actif : **{st.session_state.projet['info']['nom']}**")
 
-    # Boutons de sauvegarde
     projet_json = json.dumps(st.session_state.projet, indent=4)
     st.sidebar.download_button("📥 Sauvegarder Projet (.json)", data=projet_json, file_name=f"{sanitize_text(st.session_state.projet['info']['nom'])}.json", mime="application/json")
     
@@ -111,18 +109,19 @@ if check_password():
     ])
 
     # ---------------------------------------------------------
-    # MODULE 1 : CARNET DE CÂBLES
+    # MODULE 1 : CARNET DE CÂBLES (Avec Ajout du Tableau Divisionnaire)
     # ---------------------------------------------------------
     if menu == "🔌 1. Carnet de Câbles":
         st.title("🔌 Dimensionnement des Lignes")
         
         with st.container(border=True):
-            st.markdown("#### 📋 Identification du Projet")
-            col_p1, col_p2 = st.columns(2)
-            # Saisie détaillée du projet
+            st.markdown("#### 📋 Identification de la ligne")
+            # Modification ICI : 3 colonnes pour inclure le Tableau
+            col_p1, col_p2, col_p3 = st.columns(3)
             nom_p = col_p1.text_input("Nom du Projet / Client", st.session_state.projet["info"]["nom"], key="proj_m1")
             st.session_state.projet["info"]["nom"] = nom_p
-            ref_c = col_p2.text_input("Désignation du Circuit", "TGBT - Départ Sous-sol")
+            nom_tab_cables = col_p2.text_input("Tableau (ex: TGBT, TD1)", "TGBT")
+            ref_c = col_p3.text_input("Désignation du Circuit", "Départ Sous-sol")
 
             st.markdown("---")
             with st.form("ajout_cable"):
@@ -153,11 +152,12 @@ if check_password():
                     
                     du_reel_pct = (((b * rho * longueur * Ib) / S_ret) / V) * 100
 
+                    # Ajout de l'information "Tableau" dans la sauvegarde
                     st.session_state.projet["cables"].append({
-                        "Repère": ref_c, "Tension": tension, "P(W)": p_w, "Long.(m)": longueur,
+                        "Tableau": nom_tab_cables, "Repère": ref_c, "Tension": tension, "P(W)": p_w, "Long.(m)": longueur,
                         "Ib(A)": round(Ib, 1), "Calibre(A)": In, "Section(mm2)": S_ret, "dU(%)": round(du_reel_pct, 2)
                     })
-                    st.success(f"Circuit '{ref_c}' calculé avec succès : Câble {S_ret} mm² protégé par {In}A.")
+                    st.success(f"Circuit '{ref_c}' (depuis {nom_tab_cables}) calculé avec succès : Câble {S_ret} mm² protégé par {In}A.")
 
         if st.session_state.projet["cables"]:
             st.markdown("### 📑 Carnet de Câbles")
@@ -172,26 +172,32 @@ if check_password():
                 titre = sanitize_text(st.session_state.projet['info']['nom']).upper()
                 pdf.cell(190, 10, f" CARNET DE CABLES - PROJET : {titre}", border=1, ln=True, align="C", fill=True)
                 pdf.ln(5)
-                pdf.set_font("Helvetica", "B", 9)
+                pdf.set_font("Helvetica", "B", 8)
                 pdf.set_fill_color(200, 200, 200)
-                headers = ["Repere", "U", "L(m)", "P(W)", "Ib(A)", "Disj(A)", "Section", "dU(%)"]
-                widths = [50, 12, 12, 18, 18, 18, 42, 20]
-                for i in range(len(headers)): pdf.cell(widths[i], 8, headers[i], 1, 0, 'C', True)
+                
+                # Mise à jour des colonnes du PDF pour inclure le Tableau
+                headers = ["Tableau", "Repere", "U", "L(m)", "P(W)", "Ib(A)", "Disj.", "Section", "dU(%)"]
+                widths = [25, 25, 12, 12, 16, 16, 16, 48, 20] # Somme = 190
+                
+                for i in range(len(headers)): 
+                    pdf.cell(widths[i], 8, headers[i], 1, 0, 'C', True)
                 pdf.ln()
-                pdf.set_font("Helvetica", "", 9)
+                
+                pdf.set_font("Helvetica", "", 8)
                 for row in st.session_state.projet["cables"]:
-                    pdf.cell(widths[0], 8, sanitize_text(row["Repère"], 25), 1)
-                    pdf.cell(widths[1], 8, str(row["Tension"])[0:3], 1, 0, 'C')
-                    pdf.cell(widths[2], 8, str(row["Long.(m)"]), 1, 0, 'C')
-                    pdf.cell(widths[3], 8, str(row["P(W)"]), 1, 0, 'C')
-                    pdf.cell(widths[4], 8, str(row["Ib(A)"]), 1, 0, 'C')
-                    pdf.set_font("Helvetica", "B", 9)
-                    pdf.cell(widths[5], 8, str(row["Calibre(A)"]), 1, 0, 'C')
+                    pdf.cell(widths[0], 8, sanitize_text(row.get("Tableau", ""), 15), 1)
+                    pdf.cell(widths[1], 8, sanitize_text(row["Repère"], 15), 1)
+                    pdf.cell(widths[2], 8, str(row["Tension"])[0:3], 1, 0, 'C')
+                    pdf.cell(widths[3], 8, str(row["Long.(m)"]), 1, 0, 'C')
+                    pdf.cell(widths[4], 8, str(row["P(W)"]), 1, 0, 'C')
+                    pdf.cell(widths[5], 8, str(row["Ib(A)"]), 1, 0, 'C')
+                    pdf.set_font("Helvetica", "B", 8)
+                    pdf.cell(widths[6], 8, f"{row['Calibre(A)']}A", 1, 0, 'C')
                     pdf.set_text_color(255, 100, 0)
-                    pdf.cell(widths[6], 8, f"{row['Section(mm2)']} mm2", 1, 0, 'C')
+                    pdf.cell(widths[7], 8, f"{row['Section(mm2)']} mm2", 1, 0, 'C')
                     pdf.set_text_color(0, 0, 0)
-                    pdf.set_font("Helvetica", "", 9)
-                    pdf.cell(widths[7], 8, str(row["dU(%)"]), 1, 1, 'C')
+                    pdf.set_font("Helvetica", "", 8)
+                    pdf.cell(widths[8], 8, str(row["dU(%)"]), 1, 1, 'C')
                 return pdf.output()
 
             col_btn1, col_btn2 = st.columns(2)
@@ -208,7 +214,6 @@ if check_password():
         
         with st.container(border=True):
             st.markdown("#### 📋 Identification du Projet")
-            # Synchronisation du nom du projet
             nom_p_m2 = st.text_input("Nom du Projet / Client", st.session_state.projet["info"]["nom"], key="proj_m2")
             st.session_state.projet["info"]["nom"] = nom_p_m2
             
@@ -248,7 +253,6 @@ if check_password():
                         st.dataframe(df_tab, use_container_width=True)
                         st.metric(f"Total Absorbé ({nom_tab})", f"{df_tab['P.Abs(W)'].sum()} W")
 
-            # Synthèse Globale TGBT
             with onglets[-1]:
                 st.markdown("### 🌍 Bilan Bâtiment (TGBT)")
                 bilan_global = [{"Tableau": t, "Puissance Absorbée (W)": sum(c["P.Abs(W)"] for c in circs)} for t, circs in st.session_state.projet["tableaux"].items()]
@@ -312,71 +316,4 @@ if check_password():
                         pdf.cell(190, 10, f"PUISSANCE APPARENTE ESTIMEE (Cos phi 0.8) : {kva_estime} kVA", border=1, ln=True, align="C")
                         return pdf.output()
 
-                    if st.button("📄 Exporter Bilan Complet (PDF)", type="primary"):
-                        st.download_button("📥 Télécharger Bilan PDF", bytes(generate_pdf_bilan()), f"Bilan_{sanitize_text(st.session_state.projet['info']['nom'])}.pdf")
-
-    # ---------------------------------------------------------
-    # MODULE 3 : NOMENCLATURE & DEVIS
-    # ---------------------------------------------------------
-    elif menu == "💰 3. Nomenclature & Devis":
-        st.title("💰 Devis et Liste d'Achats")
-        nomenclatures = []
-        
-        for cab in st.session_state.projet["cables"]:
-            nomenclatures.append({"Catégorie": "Câble", "Désignation": f"Câble Cuivre {cab['Section(mm2)']} mm2", "Quantité": cab["Long.(m)"], "Unité": "m", "Prix Unitaire HT": 15.0})
-            nomenclatures.append({"Catégorie": "Protection", "Désignation": f"Disjoncteur {cab['Calibre(A)']}A", "Quantité": 1, "Unité": "U", "Prix Unitaire HT": 80.0})
-
-        for tab, circs in st.session_state.projet["tableaux"].items():
-            for c in circs:
-                cal_estime = 16 if c["P(W)"] <= 3500 else 20 if c["P(W)"] <= 4500 else 32
-                nomenclatures.append({"Catégorie": "Protection", "Désignation": f"Disjoncteur Divisionnaire {cal_estime}A", "Quantité": 1, "Unité": "U", "Prix Unitaire HT": 65.0})
-
-        if not nomenclatures:
-            st.info("Saisissez des données dans les modules précédents pour générer le devis.")
-        else:
-            df_nom = pd.DataFrame(nomenclatures)
-            df_nom["Prix Unitaire HT"] = pd.to_numeric(df_nom["Prix Unitaire HT"], errors='coerce').fillna(0)
-            df_nom["Quantité"] = pd.to_numeric(df_nom["Quantité"], errors='coerce').fillna(0)
-            
-            df_grouped = df_nom.groupby(["Catégorie", "Désignation", "Unité"], as_index=False).agg({"Quantité": "sum", "Prix Unitaire HT": "mean"})
-            
-            st.write("✏️ *Astuce : Modifiez les prix unitaires. Appuyez sur Entrée, puis cliquez sur Exporter.*")
-            df_edited = st.data_editor(
-                df_grouped,
-                column_config={"Prix Unitaire HT": st.column_config.NumberColumn("Prix U. HT (MAD)", format="%.2f")},
-                hide_index=True, use_container_width=True
-            )
-            
-            df_edited["Total HT"] = df_edited["Quantité"] * df_edited["Prix Unitaire HT"]
-            total_ht = df_edited["Total HT"].sum()
-            
-            c1, c2 = st.columns(2)
-            c1.metric("Total Matériel (HT)", f"{total_ht:,.2f} MAD")
-            c2.metric("Total Matériel (TTC 20%)", f"{total_ht * 1.20:,.2f} MAD")
-
-            st.download_button("📊 Exporter vers Excel (.xlsx)", data=to_excel(df_edited), file_name=f"Devis_{sanitize_text(st.session_state.projet['info']['nom'])}.xlsx", type="primary")
-
-    # ---------------------------------------------------------
-    # MODULE 4 : OUTILS
-    # ---------------------------------------------------------
-    elif menu == "📉 4. Outils (Cos φ & IRVE)":
-        onglets = st.tabs(["📉 Cos φ", "🚘 IRVE"])
-        with onglets[0]:
-            st.title("Compensation d'Energie Réactive")
-            with st.container(border=True):
-                p_kw = st.number_input("Puissance (kW)", value=100.0)
-                c1, c2 = st.columns(2)
-                cos_i = c1.slider("Cos φ actuel", 0.5, 0.95, 0.75)
-                cos_v = c2.slider("Cos φ cible", 0.9, 1.0, 0.95)
-                qc = p_kw * (math.tan(math.acos(cos_i)) - math.tan(math.acos(cos_v)))
-                st.success(f"Batterie condensateurs : **{math.ceil(qc)} kVAR**")
-            
-        with onglets[1]:
-            st.title("Mobilité Electrique (IRVE)")
-            with st.container(border=True):
-                p_b = st.selectbox("Puissance", ["7.4 kW (32A Mono)", "22 kW (32A Tri)"])
-                st.info("Différentiel 30mA Type B. Câble : 10 mm² minimum.")
-
-    st.sidebar.markdown("---")
-    if st.sidebar.button("🔴 Déconnexion"):
-        st.session_state.clear(); st.rerun()
+                    if st.button("📄 Exporter Bilan Complet

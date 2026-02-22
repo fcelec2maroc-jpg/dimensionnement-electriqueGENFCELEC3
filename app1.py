@@ -33,12 +33,10 @@ def to_excel(df):
     return output.getvalue()
 
 def sanitize_text(text, max_len=30):
-    """Blindage total contre les crashs PDF (Emojis, Arabe, Symboles spéciaux)"""
     if not isinstance(text, str):
         return str(text)
+    # Remplacement de tous les caractères qui peuvent bloquer le PDF
     clean = text.replace("φ", "phi").replace("€", "Euros").replace("é", "e").replace("è", "e").replace("à", "a").replace("É", "E")
-    # Forcer l'encodage pour ignorer les caractères que FPDF ne peut pas imprimer (évite le crash)
-    clean = clean.encode('latin-1', 'ignore').decode('latin-1')
     return clean[:max_len] + "..." if len(clean) > max_len else clean
 
 # --- CLASSE PDF PROFESSIONNELLE ---
@@ -133,35 +131,31 @@ if check_password():
                 p_w = c2.number_input("Puissance (W)", min_value=0.0, value=3500.0)
                 longueur = c3.number_input("Longueur (m)", min_value=1.0, value=50.0)
                 
-                c5, c6, c7, c8 = st.columns(4)
+                c5, c6, c7 = st.columns(3)
                 nature = c5.selectbox("Métal", ["Cuivre", "Aluminium"])
                 
-                type_cable = c6.selectbox("Type de Câble", [
-                    "U1000 R2V / RO2V", 
-                    "H07VU / H07VR (Fils)", 
-                    "H07RN-F (Souple)", 
-                    "XAV / AR2V (Armé)", 
-                    "CR1-C1 (Anti-incendie)", 
-                    "Câble Solaire (FG21M21)"
-                ])
-
-                type_charge = c7.selectbox("Application", [
+                # NOUVELLES OPTIONS D'APPLICATION ICI
+                type_charge = c6.selectbox("Application", [
                     "Éclairage (Max 3%)", 
                     "Prises de courant (Max 5%)",
                     "Force Motrice / Moteur (Max 5%)",
                     "Chauffage / Cuisson (Max 5%)",
                     "Ligne Principale / Abonné (Max 2%)"
                 ])
-                cos_phi = c8.slider("Cos φ", 0.7, 1.0, 0.85)
+                cos_phi = c7.slider("Cos φ", 0.7, 1.0, 0.85)
 
                 if st.form_submit_button("Calculer et Ajouter au Carnet"):
                     V = 230 if "230V" in tension else 400
                     rho = 0.0225 if "Cuivre" in nature else 0.036
                     b = 2 if "230V" in tension else 1
                     
-                    if "3%" in type_charge: du_max = 3.0
-                    elif "2%" in type_charge: du_max = 2.0
-                    else: du_max = 5.0
+                    # LOGIQUE AUTOMATIQUE DE CHUTE DE TENSION MAX
+                    if "3%" in type_charge:
+                        du_max = 3.0
+                    elif "2%" in type_charge:
+                        du_max = 2.0
+                    else:
+                        du_max = 5.0
 
                     Ib = p_w / (V * cos_phi) if b == 2 else p_w / (V * math.sqrt(3) * cos_phi)
                     calibres = [10, 16, 20, 25, 32, 40, 50, 63, 80, 100, 125, 160, 200, 250, 400, 630, 800, 1000]
@@ -174,11 +168,10 @@ if check_password():
                     du_reel_pct = (((b * rho * longueur * Ib) / S_ret) / V) * 100
 
                     st.session_state.projet["cables"].append({
-                        "Tableau": nom_tab_cables, "Repère": ref_c, "Type Câble": type_cable, "Métal": nature, 
-                        "Tension": tension, "P(W)": p_w, "Long.(m)": longueur,
+                        "Tableau": nom_tab_cables, "Repère": ref_c, "Tension": tension, "P(W)": p_w, "Long.(m)": longueur,
                         "Ib(A)": round(Ib, 1), "Calibre(A)": In, "Section(mm2)": S_ret, "dU(%)": round(du_reel_pct, 2)
                     })
-                    st.success(f"Circuit '{ref_c}' calculé avec succès : {type_cable} {S_ret} mm² protégé par {In}A.")
+                    st.success(f"Circuit '{ref_c}' calculé avec succès : Câble {S_ret} mm² protégé par {In}A.")
 
         if st.session_state.projet["cables"]:
             st.markdown("### 📑 Carnet de Câbles")
@@ -196,8 +189,9 @@ if check_password():
                 pdf.set_font("Helvetica", "B", 8)
                 pdf.set_fill_color(200, 200, 200)
                 
-                headers = ["Tab.", "Repere", "Type Cable", "U", "L(m)", "Ib(A)", "Disj.", "Section", "dU(%)"]
-                widths = [18, 22, 28, 10, 12, 15, 15, 52, 18] # Somme exacte = 190
+                # CORRECTION PDF: Ligne complète sans bug !
+                headers = ["Tableau", "Repere", "U", "L(m)", "P(W)", "Ib(A)", "Disj.", "Section", "dU(%)"]
+                widths = [25, 25, 12, 12, 16, 16, 16, 48, 20]
                 
                 for i in range(len(headers)): 
                     pdf.cell(widths[i], 8, headers[i], 1, 0, 'C', True)
@@ -205,16 +199,11 @@ if check_password():
                 
                 pdf.set_font("Helvetica", "", 8)
                 for row in st.session_state.projet["cables"]:
-                    pdf.cell(widths[0], 8, sanitize_text(row.get("Tableau", "TGBT"), 10), 1)
-                    pdf.cell(widths[1], 8, sanitize_text(row["Repère"], 12), 1)
-                    
-                    # CORRECTION: Coupe intelligemment avant la parenthèse pour garder le nom technique
-                    raw_type = row.get("Type Câble", "U1000 R2V")
-                    clean_type = sanitize_text(raw_type.split(" (")[0], 15) 
-                    pdf.cell(widths[2], 8, clean_type, 1, 0, 'C')
-                    
-                    pdf.cell(widths[3], 8, str(row["Tension"])[0:3], 1, 0, 'C')
-                    pdf.cell(widths[4], 8, str(row["Long.(m)"]), 1, 0, 'C')
+                    pdf.cell(widths[0], 8, sanitize_text(row.get("Tableau", "TGBT"), 15), 1)
+                    pdf.cell(widths[1], 8, sanitize_text(row["Repère"], 15), 1)
+                    pdf.cell(widths[2], 8, str(row["Tension"])[0:3], 1, 0, 'C')
+                    pdf.cell(widths[3], 8, str(row["Long.(m)"]), 1, 0, 'C')
+                    pdf.cell(widths[4], 8, str(row["P(W)"]), 1, 0, 'C')
                     pdf.cell(widths[5], 8, str(row["Ib(A)"]), 1, 0, 'C')
                     pdf.set_font("Helvetica", "B", 8)
                     pdf.cell(widths[6], 8, f"{row['Calibre(A)']}A", 1, 0, 'C')
@@ -264,6 +253,7 @@ if check_password():
                         c_nom = c1.text_input("Désignation Circuit (ex: Prises Salon)")
                         c_p = c2.number_input("Puissance (W)", min_value=0.0, value=1000.0)
                         
+                        # NOUVELLES OPTIONS DE TYPE ICI
                         c_type = c3.selectbox("Type", [
                             "Éclairage", 
                             "Prises de courant", 
@@ -275,11 +265,17 @@ if check_password():
                             "Divers"
                         ])
 
-                        if c_type in ["Éclairage", "Chauffage électrique", "IRVE (Recharge VE)"]: ku_def = 1.0
-                        elif c_type == "Prises de courant": ku_def = 0.5
-                        elif c_type == "Cuisson": ku_def = 0.7
-                        elif c_type in ["Climatisation / PAC", "Force Motrice"]: ku_def = 0.75
-                        else: ku_def = 0.8
+                        # Ku PAR DÉFAUT SELON LE TYPE CHOISI
+                        if c_type in ["Éclairage", "Chauffage électrique", "IRVE (Recharge VE)"]:
+                            ku_def = 1.0
+                        elif c_type == "Prises de courant":
+                            ku_def = 0.5
+                        elif c_type == "Cuisson":
+                            ku_def = 0.7
+                        elif c_type in ["Climatisation / PAC", "Force Motrice"]:
+                            ku_def = 0.75
+                        else:
+                            ku_def = 0.8
                             
                         c_ku = c4.number_input("Ku (Utilisation)", min_value=0.1, max_value=1.0, value=float(ku_def), step=0.05)
                         
@@ -369,9 +365,7 @@ if check_password():
         nomenclatures = []
         
         for cab in st.session_state.projet["cables"]:
-            nature = cab.get("Métal", "Cuivre")
-            type_c = cab.get("Type Câble", "U1000 R2V").split(" (")[0]
-            nomenclatures.append({"Catégorie": "Câble", "Désignation": f"Câble {nature} {type_c} - {cab['Section(mm2)']} mm2", "Quantité": cab["Long.(m)"], "Unité": "m", "Prix Unitaire HT": 15.0})
+            nomenclatures.append({"Catégorie": "Câble", "Désignation": f"Câble Cuivre {cab['Section(mm2)']} mm2", "Quantité": cab["Long.(m)"], "Unité": "m", "Prix Unitaire HT": 15.0})
             nomenclatures.append({"Catégorie": "Protection", "Désignation": f"Disjoncteur {cab['Calibre(A)']}A", "Quantité": 1, "Unité": "U", "Prix Unitaire HT": 80.0})
 
         for tab, circs in st.session_state.projet["tableaux"].items():

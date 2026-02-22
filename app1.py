@@ -174,4 +174,214 @@ if check_password():
                 pdf.set_fill_color(200, 200, 200)
                 
                 headers = ["Tableau", "Repere", "U", "L(m)", "P(W)", "Ib(A)", "Disj.", "Section", "dU(%)"]
-                widths = [25, 25, 12, 12, 16, 16, 16, 48,
+                widths = [25, 25, 12, 12, 16, 16, 16, 48, 20]
+                
+                for i in range(len(headers)): 
+                    pdf.cell(widths[i], 8, headers[i], 1, 0, 'C', True)
+                pdf.ln()
+                
+                pdf.set_font("Helvetica", "", 8)
+                for row in st.session_state.projet["cables"]:
+                    # Faille 2 corrigée: Utilisation de .get() robuste pour les anciens fichiers JSON
+                    pdf.cell(widths[0], 8, sanitize_text(row.get("Tableau", "TGBT"), 15), 1)
+                    pdf.cell(widths[1], 8, sanitize_text(row["Repère"], 15), 1)
+                    pdf.cell(widths[2], 8, str(row["Tension"])[0:3], 1, 0, 'C')
+                    pdf.cell(widths[3], 8, str(row["Long.(m)"]), 1, 0, 'C')
+                    pdf.cell(widths[4], 8, str(row["P(W)"]), 1, 0, 'C')
+                    pdf.cell(widths[5], 8, str(row["Ib(A)"]), 1, 0, 'C')
+                    pdf.set_font("Helvetica", "B", 8)
+                    pdf.cell(widths[6], 8, f"{row['Calibre(A)']}A", 1, 0, 'C')
+                    pdf.set_text_color(255, 100, 0)
+                    pdf.cell(widths[7], 8, f"{row['Section(mm2)']} mm2", 1, 0, 'C')
+                    pdf.set_text_color(0, 0, 0)
+                    pdf.set_font("Helvetica", "", 8)
+                    pdf.cell(widths[8], 8, str(row["dU(%)"]), 1, 1, 'C')
+                return pdf.output()
+
+            col_btn1, col_btn2 = st.columns(2)
+            if col_btn1.button("📄 Exporter Carnet (PDF)", type="primary"):
+                st.download_button("📥 Télécharger PDF", bytes(generate_pdf_cables()), f"Cables_{sanitize_text(st.session_state.projet['info']['nom'])}.pdf")
+            if col_btn2.button("🗑️ Vider le Carnet"):
+                st.session_state.projet["cables"] = []; st.rerun()
+
+    # ---------------------------------------------------------
+    # MODULE 2 : ARCHITECTURE MULTI-TABLEAUX
+    # ---------------------------------------------------------
+    elif menu == "🏢 2. Bilan de Puissance (Multi-Tab)":
+        st.title("🏢 Bilan de Puissance Global")
+        
+        with st.container(border=True):
+            st.markdown("#### 📋 Identification du Projet")
+            nom_p_m2 = st.text_input("Nom du Projet / Client", st.session_state.projet["info"]["nom"], key="proj_m2")
+            st.session_state.projet["info"]["nom"] = nom_p_m2
+            
+            st.markdown("---")
+            col_t1, col_t2 = st.columns([3, 1])
+            nouveau_tab = col_t1.text_input("Ajouter un Tableau Divisionnaire (ex: TD RDC, TD Sous-sol)")
+            if col_t2.button("➕ Créer le tableau", use_container_width=True) and nouveau_tab:
+                if nouveau_tab not in st.session_state.projet["tableaux"]:
+                    st.session_state.projet["tableaux"][nouveau_tab] = []
+                    st.rerun()
+
+        if st.session_state.projet["tableaux"]:
+            onglets = st.tabs(list(st.session_state.projet["tableaux"].keys()) + ["🌍 SYNTHÈSE TGBT"])
+            
+            for i, nom_tab in enumerate(list(st.session_state.projet["tableaux"].keys())):
+                with onglets[i]:
+                    if st.button(f"❌ Supprimer le tableau '{nom_tab}'", key=f"del_{nom_tab}"):
+                        del st.session_state.projet["tableaux"][nom_tab]
+                        st.rerun()
+
+                    with st.form(f"form_{i}"):
+                        c1, c2, c3, c4 = st.columns([2,1,1,1])
+                        c_nom = c1.text_input("Désignation Circuit (ex: Prises Salon)")
+                        c_p = c2.number_input("Puissance (W)", min_value=0.0, value=1000.0)
+                        c_type = c3.selectbox("Type", ["Eclairage", "Prises", "CVC / Moteur"])
+                        c_ku = c4.number_input("Ku (Utilisation)", value=1.0 if c_type=="Eclairage" else 0.8)
+                        
+                        if st.form_submit_button("Ajouter à ce tableau"):
+                            st.session_state.projet["tableaux"][nom_tab].append({
+                                "Circuit": c_nom, "Type": c_type, "P(W)": c_p, "Ku": c_ku, "P.Abs(W)": int(c_p * c_ku)
+                            })
+                            st.rerun()
+                    
+                    circuits = st.session_state.projet["tableaux"].get(nom_tab, [])
+                    if circuits:
+                        df_tab = pd.DataFrame(circuits)
+                        st.dataframe(df_tab, use_container_width=True)
+                        st.metric(f"Total Absorbé ({nom_tab})", f"{df_tab['P.Abs(W)'].sum()} W")
+
+            with onglets[-1]:
+                st.markdown("### 🌍 Bilan Bâtiment (TGBT)")
+                bilan_global = [{"Tableau": t, "Puissance Absorbée (W)": sum(c["P.Abs(W)"] for c in circs)} for t, circs in st.session_state.projet["tableaux"].items()]
+                
+                if bilan_global:
+                    df_g = pd.DataFrame(bilan_global)
+                    st.dataframe(df_g, use_container_width=True)
+                    p_totale = df_g["Puissance Absorbée (W)"].sum()
+                    
+                    ks_global = st.slider("Foisonnement TGBT (Ks Global)", 0.4, 1.0, st.session_state.projet.get("ks_global", 0.8))
+                    st.session_state.projet["ks_global"] = ks_global
+                    
+                    p_appel = int(p_totale * ks_global)
+                    kva_estime = round(p_appel / 0.8 / 1000, 1)
+                    
+                    c1_res, c2_res = st.columns(2)
+                    c1_res.success(f"**PUISSANCE ACTIVE D'APPEL : {p_appel} W**")
+                    c2_res.info(f"**PUISSANCE APPARENTE (Abonnement) : {kva_estime} kVA**")
+
+                    def generate_pdf_bilan():
+                        pdf = FCELEC_Report()
+                        pdf.set_auto_page_break(auto=True, margin=15)
+                        pdf.add_page()
+                        
+                        pdf.set_font("Helvetica", "B", 14)
+                        titre = sanitize_text(st.session_state.projet['info']['nom']).upper()
+                        pdf.cell(190, 10, f"BILAN DE PUISSANCE MULTI-TABLEAUX - {titre}", ln=True, align="C")
+                        pdf.ln(5)
+
+                        for tab_name, circs in st.session_state.projet["tableaux"].items():
+                            if not circs: continue
+                            pdf.set_font("Helvetica", "B", 11)
+                            pdf.set_fill_color(220, 220, 220)
+                            pdf.cell(190, 8, f" TABLEAU : {sanitize_text(tab_name)}", border=1, ln=True, fill=True)
+                            
+                            pdf.set_font("Helvetica", "B", 9)
+                            pdf.cell(70, 6, "Circuit", 1)
+                            pdf.cell(40, 6, "Type", 1, 0, 'C')
+                            pdf.cell(30, 6, "P.Inst (W)", 1, 0, 'C')
+                            pdf.cell(20, 6, "Ku", 1, 0, 'C')
+                            pdf.cell(30, 6, "P.Abs (W)", 1, 1, 'C')
+                            
+                            pdf.set_font("Helvetica", "", 9)
+                            sous_total = 0
+                            for c in circs:
+                                pdf.cell(70, 6, sanitize_text(c['Circuit'], 35), 1)
+                                pdf.cell(40, 6, sanitize_text(c['Type']), 1, 0, 'C')
+                                pdf.cell(30, 6, str(c['P(W)']), 1, 0, 'C')
+                                pdf.cell(20, 6, str(c['Ku']), 1, 0, 'C')
+                                pdf.cell(30, 6, str(c['P.Abs(W)']), 1, 1, 'C')
+                                sous_total += c['P.Abs(W)']
+                            
+                            pdf.set_font("Helvetica", "I", 9)
+                            pdf.cell(190, 6, f"Sous-total absorbé pour {sanitize_text(tab_name)} : {sous_total} W", border='B', ln=True, align="R")
+                            pdf.ln(4)
+
+                        pdf.ln(5)
+                        pdf.set_font("Helvetica", "B", 12)
+                        pdf.set_fill_color(255, 245, 230)
+                        pdf.cell(190, 10, f"PUISSANCE MAXIMALE D'APPEL (Ks={ks_global}) : {p_appel} W", border=1, ln=True, align="C", fill=True)
+                        pdf.cell(190, 10, f"PUISSANCE APPARENTE ESTIMEE (Cos phi 0.8) : {kva_estime} kVA", border=1, ln=True, align="C")
+                        return pdf.output()
+
+                    if st.button("📄 Exporter Bilan Complet (PDF)", type="primary"):
+                        st.download_button("📥 Télécharger Bilan PDF", bytes(generate_pdf_bilan()), f"Bilan_{sanitize_text(st.session_state.projet['info']['nom'])}.pdf")
+
+    # ---------------------------------------------------------
+    # MODULE 3 : NOMENCLATURE & DEVIS
+    # ---------------------------------------------------------
+    elif menu == "💰 3. Nomenclature & Devis":
+        st.title("💰 Devis et Liste d'Achats")
+        nomenclatures = []
+        
+        for cab in st.session_state.projet["cables"]:
+            nomenclatures.append({"Catégorie": "Câble", "Désignation": f"Câble Cuivre {cab['Section(mm2)']} mm2", "Quantité": cab["Long.(m)"], "Unité": "m", "Prix Unitaire HT": 15.0})
+            nomenclatures.append({"Catégorie": "Protection", "Désignation": f"Disjoncteur {cab['Calibre(A)']}A", "Quantité": 1, "Unité": "U", "Prix Unitaire HT": 80.0})
+
+        for tab, circs in st.session_state.projet["tableaux"].items():
+            for c in circs:
+                cal_estime = 16 if c["P(W)"] <= 3500 else 20 if c["P(W)"] <= 4500 else 32
+                nomenclatures.append({"Catégorie": "Protection", "Désignation": f"Disjoncteur Divisionnaire {cal_estime}A", "Quantité": 1, "Unité": "U", "Prix Unitaire HT": 65.0})
+
+        if not nomenclatures:
+            st.info("Saisissez des données dans les modules précédents pour générer le devis.")
+        else:
+            df_nom = pd.DataFrame(nomenclatures)
+            df_nom["Prix Unitaire HT"] = pd.to_numeric(df_nom["Prix Unitaire HT"], errors='coerce').fillna(0)
+            df_nom["Quantité"] = pd.to_numeric(df_nom["Quantité"], errors='coerce').fillna(0)
+            
+            df_grouped = df_nom.groupby(["Catégorie", "Désignation", "Unité"], as_index=False).agg({"Quantité": "sum", "Prix Unitaire HT": "mean"})
+            
+            st.write("✏️ *Astuce : Modifiez les prix unitaires. Appuyez sur Entrée, puis cliquez sur Exporter.*")
+            
+            # Faille 1 corrigée : Ajout d'une clé "editeur_devis" pour éviter la perte des données modifiées par l'utilisateur !
+            df_edited = st.data_editor(
+                df_grouped,
+                key="editeur_devis",
+                column_config={"Prix Unitaire HT": st.column_config.NumberColumn("Prix U. HT (MAD)", format="%.2f")},
+                hide_index=True, use_container_width=True
+            )
+            
+            df_edited["Total HT"] = df_edited["Quantité"] * df_edited["Prix Unitaire HT"]
+            total_ht = df_edited["Total HT"].sum()
+            
+            c1, c2 = st.columns(2)
+            c1.metric("Total Matériel (HT)", f"{total_ht:,.2f} MAD")
+            c2.metric("Total Matériel (TTC 20%)", f"{total_ht * 1.20:,.2f} MAD")
+
+            st.download_button("📊 Exporter vers Excel (.xlsx)", data=to_excel(df_edited), file_name=f"Devis_{sanitize_text(st.session_state.projet['info']['nom'])}.xlsx", type="primary")
+
+    # ---------------------------------------------------------
+    # MODULE 4 : OUTILS
+    # ---------------------------------------------------------
+    elif menu == "📉 4. Outils (Cos φ & IRVE)":
+        onglets = st.tabs(["📉 Cos φ", "🚘 IRVE"])
+        with onglets[0]:
+            st.title("Compensation d'Energie Réactive")
+            with st.container(border=True):
+                p_kw = st.number_input("Puissance (kW)", value=100.0)
+                c1, c2 = st.columns(2)
+                cos_i = c1.slider("Cos φ actuel", 0.5, 0.95, 0.75)
+                cos_v = c2.slider("Cos φ cible", 0.9, 1.0, 0.95)
+                qc = p_kw * (math.tan(math.acos(cos_i)) - math.tan(math.acos(cos_v)))
+                st.success(f"Batterie condensateurs : **{math.ceil(qc)} kVAR**")
+            
+        with onglets[1]:
+            st.title("Mobilité Electrique (IRVE)")
+            with st.container(border=True):
+                p_b = st.selectbox("Puissance", ["7.4 kW (32A Mono)", "22 kW (32A Tri)"])
+                st.info("Différentiel 30mA Type B. Câble : 10 mm² minimum.")
+
+    st.sidebar.markdown("---")
+    if st.sidebar.button("🔴 Déconnexion"):
+        st.session_state.clear(); st.rerun()
